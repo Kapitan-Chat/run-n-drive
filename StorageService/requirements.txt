@@ -1,0 +1,7 @@
+FastAPI
+shortuuid
+python-jose[cryptography]
+uvicorn
+python-multipart
+pydantic
+aiofiles

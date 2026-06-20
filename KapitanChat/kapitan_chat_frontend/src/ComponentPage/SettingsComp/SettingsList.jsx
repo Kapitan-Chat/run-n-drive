@@ -1,0 +1,44 @@
+import { useEffect, useRef } from "react";
+import LanguageSettings from "./languageSettings";
+import ThemeSettings from "./themeSettings";
+import ProfileSettingsButton from "./profileSettingsButton";
+export default function SettingsList({isShow,children,setShow}) {
+
+    const rootRef = useRef(null);
+
+    useEffect(() => {
+        const onPointerDown = e => {
+            const el = rootRef.current;
+            if(el && !el.contains(e.target)) {
+                setShow(false);
+            }
+        }
+        document.addEventListener('pointerdown', onPointerDown);
+        return () => {
+            document.removeEventListener('pointerdown', onPointerDown);
+        }
+    },[isShow]);
+    function show() {
+     
+        return (
+            <div className={`settings settings-popover  ${isShow ? "open" : ""}`}>
+
+                <LanguageSettings />
+                <ThemeSettings />
+                <ProfileSettingsButton />
+            </div>
+        );
+    }
+    return (
+        <div ref={rootRef}>
+            
+            {children}
+            <div style={
+                {position:'relative',display:'inline-block',overflow:'visible' }
+            }>
+                {show()}
+            </div>
+            
+        </div>
+    );
+}

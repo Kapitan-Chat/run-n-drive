@@ -1,0 +1,111 @@
+# ============================================================================
+# Coolify deployment for https://kc.azimkin.dev
+#
+# Coolify's built-in proxy (Traefik) terminates TLS and forwards plain HTTP to
+# the containers. Routing is declared via Coolify's SERVICE_FQDN_* magic
+# variables below — Coolify turns them into Traefik routers (cert + network
+# handled automatically). No published host ports: traffic flows only through
+# the proxy.
+#
+# Single domain, path-based routing (Traefik picks the longest match first):
+#   /api/file  -> storage   (most specific)
+#   /api, /ws  -> backend
+#   /          -> frontend  (catch-all)
+#
+# Set the secret values (SECRET_KEY, REDIS_PASSWORD, ...) in the Coolify UI
+# "Environment Variables" tab — see .env.production for the generated values.
+# ============================================================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./KapitanChat/kapitan_chat_backend
+    restart: unless-stopped
+    environment:
+      # Route both the REST API and the WebSocket endpoint to this service.
+      SERVICE_FQDN_BACKEND: https://kc.azimkin.dev/api,https://kc.azimkin.dev/ws
+      SECRET_KEY: ${SECRET_KEY}
+      DJANGO_DEBUG: ${DJANGO_DEBUG}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
+      DJANGO_CORS_ALLOW_ALL: ${DJANGO_CORS_ALLOW_ALL}
+      DJANGO_CORS_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS}
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS}
+      DJANGO_DB_PATH: /app/data/db.sqlite3
+      REDIS_URL: ${REDIS_URL}
+    expose:
+      - "8000"
+    volumes:
+      - backend-data:/app/data
+      - backend-media:/app/media
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/admin/login/', timeout=5).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  storage:
+    build:
+      context: ./StorageService
+    restart: unless-stopped
+    environment:
+      SERVICE_FQDN_STORAGE: https://kc.azimkin.dev/api/file
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      STORAGE_PORT: "8001"
+      STORAGE_HOST: 0.0.0.0
+      STORAGE_ORIGINS: ${STORAGE_ORIGINS}
+      STORAGE_FILES_DIR: /app/files
+      STORAGE_DB_PATH: /app/data/database.sqlite3
+    expose:
+      - "8001"
+    volumes:
+      - storage-files:/app/files
+      - storage-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/openapi.json', timeout=5).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./KapitanChat/kapitan_chat_frontend
+      args:
+        VITE_BASEAPI: ${VITE_BASEAPI}
+        VITE_BASE_WS_URL: ${VITE_BASE_WS_URL}
+        VITE_BASE_FMS_URL: ${VITE_BASE_FMS_URL}
+    restart: unless-stopped
+    environment:
+      # Catch-all: everything not matched above goes to the SPA.
+      SERVICE_FQDN_FRONTEND: https://kc.azimkin.dev
+    expose:
+      - "80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+
+volumes:
+  redis-data:
+  backend-data:
+  backend-media:
+  storage-files:
+  storage-data:
